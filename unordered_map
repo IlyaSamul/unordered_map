@@ -1,0 +1,724 @@
+#include <vector>
+#include <functional>
+#include <type_traits>
+#include <iostream>
+
+
+template<size_t N>
+class StackStorage {
+private:
+    uint8_t storage[N];
+    uint8_t* currentPointer = storage;
+
+public:
+    uint8_t* allocate(size_t bytes, size_t align) {
+        uint8_t* pointer = currentPointer + (bytes - reinterpret_cast<uintptr_t>(currentPointer)) % align;
+        currentPointer = pointer + bytes;
+        return pointer;
+    }
+
+    StackStorage() = default;
+
+    StackStorage operator=(const StackStorage<N>& another) = delete;
+
+    StackStorage(const StackStorage<N>& another) = delete;
+
+};
+
+template<typename T, size_t N>
+class StackAllocator {
+private:
+    StackStorage<N>* storage_pointer;
+public:
+
+    using value_type = T;
+
+    template<typename U>
+    struct rebind {
+        typedef StackAllocator<U, N> other;
+    };
+
+    T* allocate(size_t n) {
+        return reinterpret_cast<T*>(storage_pointer->allocate(n * sizeof(T), alignof(T)));
+    }
+
+    void deallocate(T* pointer, size_t n) {
+        if (!n)
+            pointer->~T();
+    }
+
+    void destroy(T* pointer) {
+        pointer->~T();
+    }
+
+    template<typename... Args>
+    void construct(T* pointer, Args&& ... args) {
+        new(pointer) T(std::forward<Args>(args)...);
+    }
+
+    StackStorage<N>* getStoragePointer() const { return storage_pointer; }
+
+    StackAllocator() = default;
+
+    StackAllocator(StackStorage<N>& storage) { storage_pointer = &storage; }
+
+    template<typename anotherType>
+    StackAllocator(const StackAllocator<anotherType, N>& another): storage_pointer(another.getStoragePointer()) {}
+
+    template<typename T1, size_t size1>
+    bool operator==(const StackAllocator<T1, size1>& another) {
+        return N == size1 && storage_pointer = another.storage_pointer;
+    }
+
+
+    template<typename T1, size_t size1, typename T2, size_t size2>
+    bool operator!=(const StackAllocator<T1, size1>& another) { return !(*this == another); }
+};
+
+#include <type_traits>
+
+template<typename T, typename Alloc = std::allocator<T>>
+class List {
+
+    struct BaseNode {
+        BaseNode* prev;
+        BaseNode* next;
+
+        BaseNode() {
+            prev = this;
+            next = this;
+        }
+    };
+
+    struct Node : BaseNode {
+        T value;
+    public:
+        Node() = default;
+
+        Node(const T& value) : value(value) {}
+
+
+        Node(const T&& value_) : value(std::move(value_)) {}
+
+        template <typename... Args>
+        Node(Args&&... args) : value(std::forward<Args>(args)...){}
+
+    };
+
+    mutable BaseNode fakeNode;
+    size_t size_ = 0;
+    using AllocTraits = std::allocator_traits<Alloc>;
+    typename AllocTraits::template rebind_alloc<Node> alloc;
+
+public:
+    template<bool isConst>
+    class Iterator {
+    public:
+        using difference_type = std::ptrdiff_t;
+        using value_type = T;
+        using pointer = T*;
+        using reference = std::conditional_t<isConst, const T&, T&>;
+        using iterator_category = std::bidirectional_iterator_tag;
+
+        BaseNode* node;
+
+        Iterator() = default;
+
+        Iterator(BaseNode* node) : node(node) {}
+
+        Iterator(const Iterator& another) { node = another.node; }
+
+        Iterator& operator++() {
+            node = node->next;
+            return *this;
+        }
+
+        Iterator& operator--() {
+            node = node->prev;
+            return *this;
+        }
+
+        Iterator operator++(int) {
+            Iterator tmp = *this;
+            ++(*this);
+            return tmp;
+        }
+
+        Iterator operator--(int) {
+            Iterator tmp = *this;
+            --(*this);
+            return tmp;
+        }
+
+        std::conditional_t<isConst, const T&, T&> operator*() const {
+            return (static_cast<Node*>(node)->value);
+        }
+
+        std::conditional_t<isConst, const T*, T*> operator->() {
+            T* pointer = &(static_cast<Node*>(node)->value);
+            return pointer;
+        }
+
+        Iterator<isConst>& operator=(const Iterator<isConst> another) {
+            node = another.node;
+            return *this;
+        }
+
+        bool operator==(const Iterator<isConst> another) { return node == another.node; }
+
+        bool operator!=(const Iterator<isConst> another) { return !(node == another.node); }
+
+        operator Iterator<true>() const {
+            return Iterator<true>(node);
+        }
+
+    };
+
+    using const_iterator = Iterator<true>;
+    using iterator = Iterator<false>;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+    List() = default; //DONE
+
+    List(size_t size);
+
+    List(size_t size, const T& element); //done
+
+    List(Alloc newAllocator); //done
+
+    List(size_t size, Alloc newAllocator); //done
+
+    List(size_t size, const T& element, Alloc newAllocator); //done
+
+    List(const T& element, Alloc newAllocator); //done
+
+    Alloc get_allocator() const { return alloc; }
+
+    ~List();
+
+    List(const List& another);
+
+    List(const List&& another);
+
+    List& operator=(const List& another);
+
+    List& operator=(const List&& another);
+
+    size_t size() const { return size_; } //done
+
+    void push_back(const T& element); //done
+
+    void push_back(const T&& element); //done
+
+    void push_front(const T& element); //done
+
+    void push_front(const T&& element); //done
+
+    void pop_back(); //done
+
+    void pop_front(); //done
+
+    List<T, Alloc>::iterator insert(const_iterator it, const T& element); //done
+    List<T, Alloc>::iterator insert(const_iterator it, const T&& element); //done
+
+    iterator erase(const_iterator it); //done
+
+    iterator begin() {
+        return iterator(fakeNode.next);
+    }
+
+    iterator end() {
+        return iterator(&fakeNode);
+    }
+
+    const_iterator end() const {
+        return const_iterator(&fakeNode);
+    }
+
+    const_iterator begin() const {
+        return cbegin();
+    }
+
+    const_iterator cbegin() const {
+        return const_iterator(fakeNode.next);
+    }
+
+    const_iterator cend() const {
+        return const_iterator(&fakeNode);
+    }
+
+    reverse_iterator rbegin() {
+        return reverse_iterator(&fakeNode);
+    }
+
+    reverse_iterator rend() {
+        return reverse_iterator(fakeNode.next);
+    }
+
+    const_reverse_iterator rbegin() const {
+        return crbegin();
+    }
+
+    const_reverse_iterator rend() const {
+        return crend();
+    }
+
+    const_reverse_iterator crbegin() const {
+        return const_reverse_iterator(&fakeNode);
+    }
+
+    const_reverse_iterator crend() const {
+        return const_reverse_iterator(fakeNode->next);
+    }
+
+    template<typename... Args>
+    iterator emplaceBack(Args&& ... args);
+
+    template<typename... Args>
+    iterator emplaceFront(Args&& ... args);
+
+};
+
+template<typename T, typename Alloc>
+List<T, Alloc>::~List() {
+    while (size() != 0)
+        pop_back();
+}
+
+template<typename T, typename Alloc>
+void List<T, Alloc>::push_front(const T& element) {
+    insert(begin(), element);
+}
+
+template<typename T, typename Alloc>
+void List<T, Alloc>::push_front(const T&& element) {
+    insert(begin(), std::move(element));
+}
+
+template<typename T, typename Alloc>
+void List<T, Alloc>::push_back(const T& element) {
+    insert(end(), element);
+}
+
+template<typename T, typename Alloc>
+void List<T, Alloc>::push_back(const T&& element) {
+    insert(end(), std::move(element));
+}
+
+template<typename T, typename Alloc>
+void List<T, Alloc>::pop_back() {
+    erase(std::prev(end()));
+}
+
+template<typename T, typename Alloc>
+void List<T, Alloc>::pop_front() {
+    erase(begin());
+}
+
+template<typename T, typename Alloc>
+typename List<T, Alloc>::iterator List<T, Alloc>::insert(const_iterator it, const T& element) {
+    Node* node = alloc.allocate(1);
+    try {
+        alloc.construct(node, element);
+    } catch (...) {
+        alloc.deallocate(node, sizeof(Node));
+        throw;
+    }
+    node->next = it.node;
+    node->prev = it.node->prev;
+    it.node->prev->next = node;
+    it.node->prev = node;
+    ++size_;
+    return iterator(node);
+}
+
+template<typename T, typename Alloc>
+typename List<T, Alloc>::iterator List<T, Alloc>::insert(const_iterator it, const T&& element) {
+    Node* node = alloc.allocate(1);
+    try {
+        alloc.construct(node, std::move(element));
+    } catch (...) {
+        alloc.deallocate(node, sizeof(Node));
+        throw;
+    }
+    node->next = it.node;
+    node->prev = it.node->prev;
+    it.node->prev->next = node;
+    it.node->prev = node;
+    ++size_;
+    return iterator(node);
+}
+
+template<typename T, typename Alloc>
+template<typename... Args>
+typename List<T, Alloc>::iterator List<T, Alloc>::emplaceBack(Args&& ... args) {
+    Node* node = alloc.allocate(1);
+    try {
+        alloc.construct(node, std::forward<Args>(args)...);
+    } catch (...) {
+        alloc.deallocate(node, sizeof(Node));
+        throw;
+    }
+    auto it = std::prev(end());
+    node->next = it.node;
+    node->prev = it.node->prev;
+    it.node->prev->next = node;
+    it.node->prev = node;
+    ++size_;
+    return iterator(node);
+}
+
+template<typename T, typename Alloc>
+template<typename... Args>
+typename List<T, Alloc>::iterator List<T, Alloc>::emplaceFront(Args&& ... args) {
+    Node* node = alloc.allocate(1);
+    try {
+        alloc.construct(node, std::forward<Args>(args)...);
+    } catch (...) {
+        alloc.deallocate(node, sizeof(Node));
+        throw;
+    }
+    auto it = begin();
+    node->next = it.node;
+    node->prev = it.node->prev;
+    it.node->prev->next = node;
+    it.node->prev = node;
+    ++size_;
+    return iterator(node);
+}
+
+template<typename T, typename Alloc>
+typename List<T, Alloc>::iterator List<T, Alloc>::erase(const_iterator it) {
+    it.node->prev->next = it.node->next;
+    it.node->next->prev = it.node->prev;
+    auto ret = it.node->next;
+    alloc.destroy(static_cast<Node*>(it.node));
+    alloc.deallocate(static_cast<Node*>(it.node), sizeof(Node));
+    --size_;
+    return ret;
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(Alloc newAllocator) :alloc(newAllocator) {}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(size_t size) {
+    try {
+        while (size--) {
+            emplaceBack();
+        }
+    } catch (...) {
+        while (size_ != 0)
+            pop_back();
+        throw;
+    }
+}
+
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(size_t size, const T& element) {
+    try {
+        while (size--) {
+            emplaceBack(element);
+        }
+    } catch (...) {
+        while (size_ != 0)
+            pop_back();
+        throw;
+    }
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(size_t size, const T& element, Alloc newAllocator) :alloc(newAllocator) {
+    try {
+        while (size--) {
+            emplaceBack(element);
+        }
+    } catch (...) {
+        while (size_ != 0)
+            pop_back();
+        throw;
+    }
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(size_t size, Alloc newAllocator) :alloc(newAllocator) {
+    try {
+        while (size--) {
+            emplaceBack();
+        }
+    } catch (...) {
+        while (size_ != 0)
+            pop_back();
+        throw;
+    }
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(const T& element, Alloc newAllocator) :alloc(newAllocator) {
+    push_back(element);
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(const List& another) {
+    AllocTraits::select_on_container_copy_construction(another.get_allocator());
+    alloc = AllocTraits::select_on_container_copy_construction(another.get_allocator());
+    try {
+        auto it = another.begin();
+        while (it != another.end()) {
+            push_back(*it++);
+        }
+    }
+    catch (...) {
+        while (size() != 0)
+            pop_back();
+    }
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>::List(const List&& another) {
+    size_t prev_size = size_;
+    size_ = another.size_;
+    size_ = prev_size;
+//    size_ = std::move(another.size_);
+//    alloc = std::move(another.alloc);
+//    fakeNode = std::move(another.fakeNode);
+}
+
+
+template<typename T, typename Alloc>
+List<T, Alloc>& List<T, Alloc>::operator=(const List<T, Alloc>& another) {
+    size_t prev_size = size();
+    try {
+        auto it = another.begin();
+        while (it != another.end()) {
+            push_back(*it++);
+        }
+        if (AllocTraits::propagate_on_container_copy_assignment::value == true)
+            alloc = another.alloc;
+        while (prev_size--) {
+            pop_front();
+        }
+        size_ = another.size_;
+    }
+    catch (...) {
+        while (size() != prev_size) {
+            pop_back();
+        }
+    }
+    return *this;
+}
+
+template<typename T, typename Alloc>
+List<T, Alloc>& List<T, Alloc>::operator=(const List<T, Alloc>&& another) {
+    size_t prev_size = size_;
+    size_ = another.size_;
+    size_ = prev_size;
+//    fakeNode = std::move(another.fakeNode);
+//    size_ = std::move(another.size_);
+//    alloc = std::move(another.alloc);
+    return *this;
+}
+
+template<typename Key, typename Value, typename Hash = std::hash<Key>, typename
+Equal = std::equal_to<Key>, typename Alloc = std::allocator<std::pair<const Key, Value>>>
+
+class UnorderedMap {
+public:
+    using NodeType = std::pair<const Key, Value>;
+    using Iterator = typename List<NodeType, Alloc>::iterator;
+    using ConstIterator = typename List<NodeType, Alloc>::const_iterator;
+    Alloc nodeTypeAlloc;
+
+    Value& operator[](const Key& key); // done
+
+    Value& operator[](const Key& key) const = delete;
+
+    const Value& at(const Key& key) const;
+
+    Value& at(const Key& key);
+
+    size_t size() const { return size_; } // done
+
+    Iterator begin() { return list.begin(); } // done
+
+    ConstIterator begin() const { return list.cbegin(); } // done
+
+    Iterator end() { return list.end(); } // done
+
+    ConstIterator end() const { return list.cend(); } // done
+
+    ConstIterator cbegin() const { return list.cbegin(); } // done
+
+    ConstIterator cend() const { return list.cend(); } // done
+
+    std::pair<Iterator, bool> insert(const NodeType& node); // done
+
+    std::pair<Iterator, bool> insert(NodeType&& node); // done
+
+    template<typename InputIterator>
+    void insert(InputIterator first, InputIterator last); // done
+
+    template<typename... Args>
+    std::pair<Iterator, bool> emplace(Args&& ... args);
+
+    void erase(Iterator iter); // done
+
+    void erase(Iterator first, Iterator last);
+
+
+    Iterator find(const Key& key); // done
+
+    double load_factor() { return size_ / buckets.size(); } //done
+
+    double max_load_factor() { return 1.0; } // done
+
+    void reserve(size_t capacity); // done
+
+    size_t max_size() { return buckets.size(); } // done
+
+private:
+
+    Hash hash;
+    Equal equal;
+    mutable List<NodeType, Alloc> list;
+    std::vector<std::vector<Iterator>> buckets = std::vector<std::vector<Iterator>>(10);
+    size_t size_ = 0;
+};
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+Value& UnorderedMap<Key, Value, Hash, Equal, Alloc>::operator[](const Key& key) {
+    auto it = find(key);
+    if (it == list.end()) {
+        return (*(emplace(std::make_pair(key, Value()))).first).second;
+    }
+    return (*it).second;
+}
+
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+template<typename... Args>
+std::pair<typename UnorderedMap<Key, Value, Hash, Equal, Alloc>::Iterator, bool>
+UnorderedMap<Key, Value, Hash, Equal, Alloc>::emplace(Args&& ... args) {
+
+    NodeType* newNode = std::allocator_traits<Alloc>::allocate(nodeTypeAlloc, 1);
+    std::allocator_traits<Alloc>::construct(nodeTypeAlloc, newNode, std::forward<Args>(args)...);
+    auto it = find(newNode->first);
+    if (it == list.end()) {
+        ++size_;
+        if (load_factor() > max_load_factor())
+            reserve(size_ * 2 + 1);
+        size_t position = hash(newNode->first) % buckets.size();
+        list.template emplaceFront(std::move(const_cast<Key&>(newNode->first)), std::move(newNode->second));
+        buckets[position].push_back(list.begin());
+        std::allocator_traits<Alloc>::destroy(nodeTypeAlloc, newNode);
+        std::allocator_traits<Alloc>::deallocate(nodeTypeAlloc, newNode, 1);
+        return {buckets[position].back(), true};
+    }
+    std::allocator_traits<Alloc>::destroy(nodeTypeAlloc, newNode);
+    std::allocator_traits<Alloc>::deallocate(nodeTypeAlloc, newNode, 1);
+    return {list.end(), false};
+} //TODO remake
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+typename UnorderedMap<Key, Value, Hash, Equal, Alloc>::Iterator UnorderedMap<Key, Value, Hash, Equal, Alloc>::find(
+        const Key& key) {
+    size_t position = hash(key) % buckets.size();
+    for (size_t i = 0; i < buckets[position].size(); ++i)
+        if (equal(buckets[position][i]->first, key))
+            return buckets[position][i];
+    return list.end();
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+std::pair<typename UnorderedMap<Key, Value, Hash, Equal, Alloc>::Iterator, bool>
+UnorderedMap<Key, Value, Hash, Equal, Alloc>::insert(const NodeType& node) {
+    return emplace(node);
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+std::pair<typename UnorderedMap<Key, Value, Hash, Equal, Alloc>::Iterator, bool>
+UnorderedMap<Key, Value, Hash, Equal, Alloc>::insert(NodeType&& node) {
+    auto it = find(node.first);
+    if (it == list.end()) {
+        ++size_;
+        if (load_factor() > max_load_factor())
+            reserve(size_ * 2 + 1);
+        size_t position = hash(node.first) % buckets.size();
+        list.template emplaceFront(std::move(const_cast<Key&>(node.first)), std::move(node.second));
+        buckets[position].push_back(list.begin());
+        return {buckets[position].back(), true};
+    }
+    return {list.end(), false};
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+void UnorderedMap<Key, Value, Hash, Equal, Alloc>::reserve(size_t capacity) {
+    if (capacity <= buckets.size())
+        return;
+    std::vector<std::vector<Iterator>> newBuckets(capacity);
+    auto it = begin();
+    while (it != end()) {
+        size_t position = hash((*it).first) % capacity;
+        newBuckets[position].push_back(it);
+        ++it;
+    }
+    buckets = std::move(newBuckets);
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+template<typename InputIterator>
+void UnorderedMap<Key, Value, Hash, Equal, Alloc>::insert(InputIterator first, InputIterator last) {
+    while (first != last) {
+        insert(*first);
+        ++first;
+    }
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+void UnorderedMap<Key, Value, Hash, Equal, Alloc>::erase(UnorderedMap::Iterator iter) {
+    if (iter != list.end()) {
+        --size_;
+        size_t position = hash((*iter).first) % buckets.size();
+        auto bucketIt = buckets[position].begin();
+        while (bucketIt != buckets[position].end()) {
+            if (*bucketIt == iter) {
+                buckets[position].erase(bucketIt);
+                break;
+            }
+            ++bucketIt;
+        }
+        list.erase(iter);
+    }
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+void UnorderedMap<Key, Value, Hash, Equal, Alloc>::erase(UnorderedMap::Iterator first, UnorderedMap::Iterator last) {
+    while (first != last) {
+        auto tmp = first;
+        ++tmp;
+        erase(first);
+        first = tmp;
+    }
+}
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+Value& UnorderedMap<Key, Value, Hash, Equal, Alloc>::at(const Key& key) {
+    size_t position = hash(key) % buckets.size();
+    for (size_t i = 0; i < buckets[position].size(); ++i) {
+        if (equal(buckets[position][i]->first, key))
+            return (*buckets[position][i]).second;
+    }
+    throw std::out_of_range("aboba");
+}
+
+
+template<typename Key, typename Value, typename Hash, typename Equal, typename Alloc>
+const Value& UnorderedMap<Key, Value, Hash, Equal, Alloc>::at(const Key& key) const {
+    size_t position = hash(key) % buckets.size();
+    for (size_t i = 0; i < buckets[position].size(); ++i)
+        if (equal(buckets[position][i]->first, key))
+            return (*buckets[position][i]).second;
+    throw std::out_of_range("aboba");
+}
